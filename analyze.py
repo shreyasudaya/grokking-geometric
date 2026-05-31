@@ -93,7 +93,10 @@ for ckpt_name in checkpoints:
     ckpt_path = os.path.join(out_dir, ckpt_name)
     
     # Load model
-    checkpoint = torch.load(ckpt_path, map_location=device)
+    try:
+        checkpoint = torch.load(ckpt_path, map_location=device)
+    except Exception:
+        checkpoint = torch.load(ckpt_path, map_location=device, weights_only=False)
     model = GPT(GPTConfig(**checkpoint['model_args']))
     model.load_state_dict(checkpoint['model'])
     model.to(device)
