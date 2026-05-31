@@ -1,0 +1,9 @@
+torch>=2.1.0
+torchvision
+torchaudio
+transformers>=4.35.0
+datasets>=2.14.0
+tiktoken>=0.5.0
+wandb
+tqdm
+#pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
