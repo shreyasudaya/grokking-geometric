@@ -4,6 +4,17 @@ This guide is the recommended path for a fresh Windows clone. It keeps
 checkpoints storage-safe, generates per-run plots, writes aggregate result
 tables/figures, and includes the current ablation controls.
 
+For a fresh Windows machine, the one-command launcher is:
+
+```powershell
+.\run_fresh_windows.ps1 -Mode pilot
+```
+
+Use `-Mode quick` for a smoke test, `-Mode full` for the default 240-run sweep,
+or `-Mode ablation` for the expanded weight-decay/train-fraction grid. The
+launcher creates `.venv`, installs dependencies, generates datasets, enables
+intervention metrics, and then calls `run_sweeps.ps1`.
+
 ## 1. Clone And Enter The Repo
 
 ```powershell
@@ -71,8 +82,9 @@ The run should produce `signals.csv` and `signals.png`, then delete temporary
 checkpoint files.
 
 `signals.csv` includes loss, Hessian/OT geometry, CKA, activation norms,
-parameter norms, gradient norms, entropy, probability margins, logit margins,
-and true-class logit margins.
+SVCCA, parameter norms, gradient norms, entropy, probability margins, logit
+margins, and true-class logit margins. If interventions are enabled, it also
+includes layerwise intervention loss/accuracy deltas.
 
 ## 6. Run A Small Pilot Sweep
 
@@ -96,6 +108,12 @@ aggregate pipeline quickly. Aggregate outputs are written to:
 
 ```text
 results/runs_pilot_baselines/
+```
+
+To include intervention metrics when calling `run_sweeps.ps1` directly, add:
+
+```powershell
+-ExtraOverrides "analysis.interventions.enabled=true"
 ```
 
 ## 7. Run The Full Storage-Safe Sweep
@@ -132,6 +150,12 @@ C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionP
 That multiplies the run count by `len(WeightDecays) * len(TrainFractions)`, so
 use a dedicated run root and expect much longer runtime.
 
+The fresh-clone launcher exposes this as:
+
+```powershell
+.\run_fresh_windows.ps1 -Mode ablation -WeightDecays "0.0,0.1,1.0" -TrainFractions "0.25,0.5,1.0"
+```
+
 ## 8. Resume An Interrupted Sweep
 
 Use the same run root and pass `-Resume`:
@@ -167,6 +191,7 @@ weight_decay, train_fraction
 trace, trace_normalized, lambda_max
 sinkhorn_mean, sinkhorn_L*_to_L*
 cka_mean, cka_L*_to_L*
+svcca_mean, svcca_L*_to_L*, svcca_top_L*_to_L*
 activation_rms_L*, activation_std_L*
 param_l2, param_rms
 grad_l2, grad_rms
@@ -174,6 +199,9 @@ train_entropy, val_entropy
 train_prob_margin, val_prob_margin
 train_logit_margin, val_logit_margin
 train_true_logit_margin, val_true_logit_margin
+intervention_clean_loss, intervention_clean_accuracy
+intervene_<mode>_<layer>_loss_delta
+intervene_<mode>_<layer>_accuracy_delta
 ```
 
 Run folder names include the ablation settings:
@@ -187,6 +215,17 @@ For example:
 ```text
 modular_addition_L1_d128_wd1_tf0p25_seed0
 ```
+
+Intervention modes currently supported:
+
+```text
+mean_ablate
+shuffle
+noise
+zero
+```
+
+The default intervention override uses `mean_ablate`, `shuffle`, and `noise`.
 
 ## 11. Storage Policy
 
@@ -225,6 +264,7 @@ requirements.txt
 conf/
 run.py
 run_sweeps.ps1
+run_fresh_windows.ps1
 summarize_runs.py
 analysis and plotting scripts
 geometry_utils/
@@ -257,5 +297,46 @@ available. For CPU, use a smaller run:
 python run.py device=cpu dataset=modular_addition model.n_layer=1 model.n_embd=64 model.n_head=2 max_iters=2000 eval_interval=400 save_every=400 weight_decay=1.0 train_fraction=1.0 analysis.hutchinson_samples=1 analysis.power_iters=5 analysis.num_examples=64 analysis.sinkhorn_iters=10
 ```
 
+Or use the fresh-clone launcher:
+
+```powershell
+.\run_fresh_windows.ps1 -Mode quick -Cpu
+.\run_fresh_windows.ps1 -Mode pilot -Cpu
+```
+
 Do not run the full 240-run sweep on CPU unless you are prepared for a very
 long runtime.
+
+## 14. Progress And Logs
+
+The sweep script prints progress for each configuration:
+
+```text
+[17/240] RUN modular_addition_L2_d64_wd1_tf1_seed3
+step   200: train loss ..., val loss ...
+Analyzing: 40%|...
+Completed in 8.3 min
+```
+
+To save terminal output while still seeing it:
+
+```powershell
+New-Item -ItemType Directory -Force logs
+.\run_fresh_windows.ps1 -Mode full *>&1 | Tee-Object -FilePath logs\full_sweep.log
+```
+
+To check completed runs from another PowerShell window:
+
+```powershell
+$done = (Get-ChildItem runs_full_* -Recurse -Filter signals.csv).Count
+$total = 240
+"{0}/{1} complete ({2:n1}%)" -f $done, $total, (100*$done/$total)
+```
+
+For the default ablation grid, use `$total = 2160`:
+
+```powershell
+$done = (Get-ChildItem runs_ablation_* -Recurse -Filter signals.csv).Count
+$total = 2160
+"{0}/{1} complete ({2:n1}%)" -f $done, $total, (100*$done/$total)
+```

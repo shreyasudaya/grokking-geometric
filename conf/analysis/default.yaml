@@ -6,3 +6,11 @@ target_dim: 32
 epsilon: 0.05
 sinkhorn_iters: 30
 stride: 1
+svcca:
+  variance: 0.99
+  max_components: 32
+interventions:
+  enabled: false
+  num_examples: 128
+  modes: [mean_ablate, shuffle, noise]
+  noise_scale: 0.5

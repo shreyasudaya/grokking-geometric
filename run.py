@@ -29,6 +29,7 @@ from tqdm import tqdm
 from model import GPTConfig, GPT
 from hessian import analyze_checkpoint as hessian_analyze
 from geometry_utils.ot_solver import layerwise_ot_pipeline
+from geometry_utils.interventions import intervention_pipeline, flatten_intervention_results
 from plot_signals import plot_signals
 
 # ---------------------------------------------------------------------------
@@ -362,6 +363,8 @@ def run_analysis(cfg: DictConfig, checkpoint_dir: str, device: str, exp_name: st
                 epsilon=an.epsilon,
                 sinkhorn_iters=an.sinkhorn_iters,
                 seed=cfg.seed,
+                svcca_variance=an.svcca.variance,
+                svcca_max_components=an.svcca.max_components,
             )
             for i, d in enumerate(ot['distances']):
                 record[f'sinkhorn_L{i}_to_L{i+1}'] = d
@@ -375,8 +378,31 @@ def run_analysis(cfg: DictConfig, checkpoint_dir: str, device: str, exp_name: st
             cka_vals = ot.get('baselines', {}).get('linear_cka', [])
             if cka_vals:
                 record['cka_mean'] = float(np.mean(cka_vals))
+            svcca_vals = ot.get('baselines', {}).get('svcca_mean', [])
+            for i, v in enumerate(svcca_vals):
+                record[f'svcca_L{i}_to_L{i+1}'] = v
+            if svcca_vals:
+                record['svcca_mean'] = float(np.mean(svcca_vals))
+            for i, v in enumerate(ot.get('baselines', {}).get('svcca_top', [])):
+                record[f'svcca_top_L{i}_to_L{i+1}'] = v
         except Exception as e:
             print(f"  OT failed at step {step}: {e}")
+
+        interventions_cfg = an.get('interventions', {})
+        if interventions_cfg.get('enabled', False):
+            try:
+                iv = intervention_pipeline(
+                    ckpt_path=ckpt_path,
+                    dataset=cfg.dataset.dataset_name,
+                    device=device,
+                    num_examples=interventions_cfg.get('num_examples', 128),
+                    modes=list(interventions_cfg.get('modes', ['mean_ablate', 'shuffle', 'noise'])),
+                    noise_scale=interventions_cfg.get('noise_scale', 0.5),
+                    seed=cfg.seed,
+                )
+                record.update(flatten_intervention_results(iv))
+            except Exception as e:
+                print(f"  Interventions failed at step {step}: {e}")
 
         log_dict = {k: v for k, v in record.items() if k != 'step'}
         wandb.log(log_dict, step=step)

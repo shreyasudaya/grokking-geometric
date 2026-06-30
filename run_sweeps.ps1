@@ -19,6 +19,7 @@
   .\run_sweeps.ps1 -Dataset modular_addition # single dataset
   .\run_sweeps.ps1 -Resume                  # resume from existing checkpoints
   .\run_sweeps.ps1 -WeightDecays "0.0,0.1,1.0" -TrainFractions "0.25,0.5,1.0"
+  .\run_sweeps.ps1 -Pilot -ExtraOverrides "analysis.interventions.enabled=true"
 #>
 
 param(
@@ -30,7 +31,8 @@ param(
   [switch]$KeepCheckpoints,
   [string]$RunRoot = "",
   [string]$WeightDecays = "1.0",
-  [string]$TrainFractions = "1.0"
+  [string]$TrainFractions = "1.0",
+  [string]$ExtraOverrides = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +43,9 @@ if ([string]::IsNullOrWhiteSpace($RunRoot)) {
 $storagePolicy = "run_root=$RunRoot save_every=200 eval_interval=200 analysis.stride=1 storage.save_optimizer=false storage.save_rng=false storage.max_checkpoints=60 storage.max_run_gb=$MaxRunGB storage.keep_last_checkpoints=0 wandb.mode=disabled"
 if ($KeepCheckpoints) {
   $storagePolicy = "run_root=$RunRoot save_every=200 eval_interval=200 analysis.stride=1 storage.save_optimizer=false storage.save_rng=false storage.max_checkpoints=60 storage.max_run_gb=$MaxRunGB storage.keep_checkpoints_after_analysis=true storage.keep_last_checkpoints=1 wandb.mode=disabled"
+}
+if (-not [string]::IsNullOrWhiteSpace($ExtraOverrides)) {
+  $storagePolicy = "$storagePolicy $ExtraOverrides"
 }
 $BASE = "python run.py $storagePolicy"
 

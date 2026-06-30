@@ -186,7 +186,8 @@ def layerwise_sinkhorn_distances(states, epsilon=0.01, num_iters=50, project=Non
     return distances.tolist()
 
 
-def layerwise_baseline_geometry(states, project=None):
+def layerwise_baseline_geometry(states, project=None, svcca_variance=0.99,
+                                svcca_max_components=32):
     """Cheap representation baselines for comparison with OT.
 
     Returns activation scale per layer and linear CKA between consecutive
@@ -202,6 +203,8 @@ def layerwise_baseline_geometry(states, project=None):
     activation_std = [float(x.std(unbiased=False).item()) for x in pts]
 
     cka = []
+    svcca_mean = []
+    svcca_top = []
     for a, b in zip(pts[:-1], pts[1:]):
         a = a - a.mean(dim=0, keepdim=True)
         b = b - b.mean(dim=0, keepdim=True)
@@ -210,16 +213,69 @@ def layerwise_baseline_geometry(states, project=None):
         bb = torch.linalg.matrix_norm(b.T @ b, ord='fro')
         denom = aa * bb
         cka.append(float((cross / denom).item()) if denom.item() > 0 else 0.0)
+        mean_corr, top_corr = svcca_similarity(
+            a, b, variance=svcca_variance, max_components=svcca_max_components,
+        )
+        svcca_mean.append(mean_corr)
+        svcca_top.append(top_corr)
 
     return {
         'activation_rms': activation_rms,
         'activation_std': activation_std,
         'linear_cka': cka,
+        'svcca_mean': svcca_mean,
+        'svcca_top': svcca_top,
     }
 
 
+def _pca_scores(x, variance=0.99, max_components=32):
+    x = x.float()
+    x = x - x.mean(dim=0, keepdim=True)
+    if x.shape[0] < 2 or x.shape[1] < 1:
+        return x[:, :1]
+
+    u, s, _ = torch.linalg.svd(x, full_matrices=False)
+    energy = s.pow(2)
+    total = energy.sum()
+    if total.item() <= 0:
+        return x[:, :1]
+
+    keep = int(torch.searchsorted(torch.cumsum(energy, dim=0) / total,
+                                  torch.tensor(float(variance), device=x.device)).item() + 1)
+    keep = max(1, min(keep, int(max_components), s.numel(), x.shape[0] - 1))
+    return u[:, :keep] * s[:keep]
+
+
+def _inv_sqrt_psd(mat, eps=1e-5):
+    vals, vecs = torch.linalg.eigh(mat)
+    vals = vals.clamp_min(eps)
+    return (vecs * torch.rsqrt(vals).unsqueeze(0)) @ vecs.T
+
+
+def svcca_similarity(a, b, variance=0.99, max_components=32, eps=1e-5):
+    """SVCCA similarity between two sample-by-feature activation matrices."""
+    x = _pca_scores(a, variance=variance, max_components=max_components)
+    y = _pca_scores(b, variance=variance, max_components=max_components)
+    n = min(x.shape[0], y.shape[0])
+    if n < 2:
+        return 0.0, 0.0
+
+    x = x[:n] - x[:n].mean(dim=0, keepdim=True)
+    y = y[:n] - y[:n].mean(dim=0, keepdim=True)
+    denom = max(1, n - 1)
+    cxx = (x.T @ x) / denom
+    cyy = (y.T @ y) / denom
+    cxy = (x.T @ y) / denom
+    cca = _inv_sqrt_psd(cxx, eps=eps) @ cxy @ _inv_sqrt_psd(cyy, eps=eps)
+    corr = torch.linalg.svdvals(cca).clamp(0.0, 1.0)
+    if corr.numel() == 0:
+        return 0.0, 0.0
+    return float(corr.mean().item()), float(corr[0].item())
+
+
 def layerwise_ot_pipeline(ckpt_path, dataset=None, device='cuda', num_examples=512,
-                          target_dim=None, epsilon=0.01, sinkhorn_iters=50, seed=42):
+                          target_dim=None, epsilon=0.01, sinkhorn_iters=50, seed=42,
+                          svcca_variance=0.99, svcca_max_components=32):
     """Load a checkpoint, extract hidden states, and compute layerwise Sinkhorn distances.
 
     Returns a dict with full results.
@@ -259,7 +315,12 @@ def layerwise_ot_pipeline(ckpt_path, dataset=None, device='cuda', num_examples=5
 
     distances = layerwise_sinkhorn_distances(states, epsilon=epsilon,
                                               num_iters=sinkhorn_iters, project=proj)
-    baselines = layerwise_baseline_geometry(states, project=proj)
+    baselines = layerwise_baseline_geometry(
+        states,
+        project=proj,
+        svcca_variance=svcca_variance,
+        svcca_max_components=svcca_max_components,
+    )
 
     results = {
         'checkpoint': ckpt_path,
@@ -286,6 +347,8 @@ if __name__ == '__main__':
     parser.add_argument('--target-dim', type=int, default=None, help='JL projection target dim')
     parser.add_argument('--epsilon', type=float, default=0.01, help='entropic regularisation')
     parser.add_argument('--sinkhorn-iters', type=int, default=50)
+    parser.add_argument('--svcca-variance', type=float, default=0.99)
+    parser.add_argument('--svcca-max-components', type=int, default=32)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--json', type=str, default=None, help='save results to JSON')
     args = parser.parse_args()
@@ -298,6 +361,8 @@ if __name__ == '__main__':
         target_dim=args.target_dim,
         epsilon=args.epsilon,
         sinkhorn_iters=args.sinkhorn_iters,
+        svcca_variance=args.svcca_variance,
+        svcca_max_components=args.svcca_max_components,
         seed=args.seed,
     )
 

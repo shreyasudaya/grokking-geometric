@@ -74,10 +74,12 @@ def summarize_run(csv_path):
 
     sink_cols = [c for c in df.columns if c.startswith('sinkhorn_L')]
     cka_cols = [c for c in df.columns if c.startswith('cka_L')]
+    svcca_cols = [c for c in df.columns if c.startswith('svcca_L')]
     act_cols = [c for c in df.columns if c.startswith('activation_rms_L')]
 
     sink_peak, sink_final, sink_collapse, sink_peak_step = collapse_stats(df, sink_cols)
     cka_peak, cka_final, cka_collapse, cka_peak_step = collapse_stats(df, cka_cols)
+    svcca_peak, svcca_final, svcca_collapse, svcca_peak_step = collapse_stats(df, svcca_cols)
     act_peak, act_final, act_collapse, act_peak_step = collapse_stats(df, act_cols)
 
     out = {
@@ -97,20 +99,29 @@ def summarize_run(csv_path):
         'cka_final': cka_final,
         'cka_change_frac': cka_collapse,
         'cka_peak_step': cka_peak_step,
+        'svcca_peak': svcca_peak,
+        'svcca_final': svcca_final,
+        'svcca_change_frac': svcca_collapse,
+        'svcca_peak_step': svcca_peak_step,
         'activation_rms_peak': act_peak,
         'activation_rms_final': act_final,
         'activation_rms_change_frac': act_collapse,
         'activation_rms_peak_step': act_peak_step,
     }
 
-    for col in [
+    metric_cols = [
         'trace', 'trace_normalized', 'lambda_max', 'param_l2', 'param_rms',
         'grad_l2', 'grad_rms',
         'train_entropy', 'val_entropy',
         'train_prob_margin', 'val_prob_margin',
         'train_logit_margin', 'val_logit_margin',
         'train_true_logit_margin', 'val_true_logit_margin',
-    ]:
+        'svcca_mean',
+        'intervention_clean_loss', 'intervention_clean_accuracy',
+    ]
+    metric_cols.extend(c for c in df.columns if c.startswith('intervene_'))
+
+    for col in metric_cols:
         if col in df:
             vals = df[col].astype(float)
             out[f'{col}_peak'] = float(vals.max())

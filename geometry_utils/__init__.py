@@ -5,3 +5,4 @@ from .ot_solver import (
     layerwise_sinkhorn_distances,
     layerwise_ot_pipeline,
 )
+from .interventions import intervention_pipeline, flatten_intervention_results
