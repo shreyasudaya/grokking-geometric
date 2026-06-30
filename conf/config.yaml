@@ -16,6 +16,7 @@ eval_interval: 200
 save_every: 200
 learning_rate: 1.0e-3
 weight_decay: 1.0
+train_fraction: 1.0
 beta1: 0.9
 beta2: 0.98
 grad_clip: 1.0

@@ -95,14 +95,72 @@ def evaluate_loss(model, X, Y, ctx):
     return loss.item()
 
 
+def gradient_norm(model, loss_fn):
+    params = [p for p in model.parameters() if p.requires_grad]
+    loss = loss_fn()
+    grads = torch.autograd.grad(loss, params, create_graph=False, retain_graph=False, allow_unused=True)
+    sq_sum = 0.0
+    n_elems = 0
+    for grad in grads:
+        if grad is None:
+            continue
+        g = grad.detach().float()
+        sq_sum += g.pow(2).sum().item()
+        n_elems += g.numel()
+    grad_l2 = float(np.sqrt(sq_sum))
+    grad_rms = float(np.sqrt(sq_sum / n_elems)) if n_elems else 0.0
+    return grad_l2, grad_rms
+
+
+def classification_stats(model, X, Y, ctx):
+    model.eval()
+    with torch.no_grad(), ctx:
+        logits, _ = model(X, Y)
+    valid = Y != -1
+    if valid.sum().item() == 0:
+        model.train()
+        return {
+            'entropy': np.nan,
+            'prob_margin': np.nan,
+            'logit_margin': np.nan,
+            'true_logit_margin': np.nan,
+        }
+
+    logits = logits[valid].float()
+    targets = Y[valid]
+    log_probs = torch.log_softmax(logits, dim=-1)
+    probs = log_probs.exp()
+    entropy = -(probs * log_probs).sum(dim=-1).mean().item()
+
+    top2_probs = torch.topk(probs, k=2, dim=-1).values
+    top2_logits = torch.topk(logits, k=2, dim=-1).values
+    prob_margin = (top2_probs[:, 0] - top2_probs[:, 1]).mean().item()
+    logit_margin = (top2_logits[:, 0] - top2_logits[:, 1]).mean().item()
+
+    true_logits = logits.gather(1, targets.view(-1, 1)).squeeze(1)
+    other_logits = logits.clone()
+    other_logits.scatter_(1, targets.view(-1, 1), -torch.inf)
+    true_logit_margin = (true_logits - other_logits.max(dim=-1).values).mean().item()
+
+    model.train()
+    return {
+        'entropy': float(entropy),
+        'prob_margin': float(prob_margin),
+        'logit_margin': float(logit_margin),
+        'true_logit_margin': float(true_logit_margin),
+    }
+
+
 def analyze_checkpoint(ckpt_path, dataset=None, device='cuda', batch_size=512,
-                       hutchinson_samples=10, power_iters=50, seed=42):
+                       hutchinson_samples=10, power_iters=50, seed=42,
+                       train_fraction=1.0):
     ckpt = torch.load(ckpt_path, map_location=device, weights_only=False)
     model_args = ckpt['model_args']
     dataset_name = ckpt.get('dataset_name', dataset or 'modular_addition')
     n_output = ckpt.get('n_output', DATASET_CONFIGS[dataset_name]['n_output'])
     iter_num = ckpt.get('iter_num', 0)
     ckpt_val_loss = ckpt.get('val_loss', None)
+    train_fraction = float(ckpt.get('train_fraction', train_fraction))
     dc = DATASET_CONFIGS[dataset_name]
     block_size = dc['block_size']
 
@@ -128,12 +186,27 @@ def analyze_checkpoint(ckpt_path, dataset=None, device='cuda', batch_size=512,
     data_dir = os.path.join('data', dataset_name)
     train_data = np.memmap(os.path.join(data_dir, 'train.bin'), dtype=np.uint16, mode='r')
     val_data = np.memmap(os.path.join(data_dir, 'val.bin'), dtype=np.uint16, mode='r')
+    eq_length = block_size + 1
+    train_num_eq = len(train_data) // eq_length
+    train_subset = None
+    if train_fraction < 1.0:
+        if train_fraction <= 0.0:
+            raise ValueError(f"train_fraction must be in (0, 1], got {train_fraction}")
+        subset_size = max(1, int(round(train_num_eq * train_fraction)))
+        rng = np.random.default_rng(int(seed))
+        train_subset = np.sort(
+            rng.choice(train_num_eq, size=subset_size, replace=False)
+        ).astype(np.int64)
 
     def get_batch(split):
         data = train_data if split == 'train' else val_data
-        eq_length = block_size + 1
         num_eq = len(data) // eq_length
-        ix = torch.randint(0, num_eq, (batch_size,)) * eq_length
+        if split == 'train' and train_subset is not None:
+            choices = torch.randint(0, len(train_subset), (batch_size,)).numpy()
+            ix_eq = train_subset[choices]
+        else:
+            ix_eq = torch.randint(0, num_eq, (batch_size,)).numpy()
+        ix = ix_eq * eq_length
         x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
         y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
         y[:, :-n_output] = -1
@@ -152,11 +225,15 @@ def analyze_checkpoint(ckpt_path, dataset=None, device='cuda', batch_size=512,
     Xv, Yv = get_batch('val')
     val_loss = evaluate_loss(model, Xv, Yv, ctx)
     print(f"  train_loss={train_loss:.6f}, val_loss={val_loss:.6f}")
+    train_stats = classification_stats(model, X, Y, ctx)
+    val_stats = classification_stats(model, Xv, Yv, ctx)
 
     def loss_fn():
         with ctx:
             _, loss = model(X, Y)
         return loss
+
+    grad_l2, grad_rms = gradient_norm(model, loss_fn)
 
     print("Hutchinson trace estimate...")
     hutch = hutchinson_trace(model, loss_fn, num_samples=hutchinson_samples, seed=seed)
@@ -173,6 +250,10 @@ def analyze_checkpoint(ckpt_path, dataset=None, device='cuda', batch_size=512,
         'val_loss': val_loss,
         'param_l2': param_l2,
         'param_rms': param_rms,
+        'grad_l2': grad_l2,
+        'grad_rms': grad_rms,
+        'train_stats': train_stats,
+        'val_stats': val_stats,
         'hutchinson': hutch,
         'power_iteration': power,
     }
@@ -188,6 +269,7 @@ if __name__ == '__main__':
     parser.add_argument('--hutchinson-samples', type=int, default=10)
     parser.add_argument('--power-iters', type=int, default=50)
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--train-fraction', type=float, default=1.0)
     parser.add_argument('--json', type=str, default=None, help='save results to JSON file')
     args = parser.parse_args()
 
@@ -199,6 +281,7 @@ if __name__ == '__main__':
         hutchinson_samples=args.hutchinson_samples,
         power_iters=args.power_iters,
         seed=args.seed,
+        train_fraction=args.train_fraction,
     )
 
     print("\n=== Results ===")

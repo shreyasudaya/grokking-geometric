@@ -16,6 +16,7 @@ out-*/
 outputs/
 runs/
 runs_fresh_*/
+runs_*/
 logs/
 results/
 plots/*.png

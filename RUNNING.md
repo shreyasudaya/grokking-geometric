@@ -1,8 +1,8 @@
 # Running Grokking-Geometric
 
 This guide is the recommended path for a fresh Windows clone. It keeps
-checkpoints storage-safe, generates per-run plots, and writes aggregate result
-tables/figures.
+checkpoints storage-safe, generates per-run plots, writes aggregate result
+tables/figures, and includes the current ablation controls.
 
 ## 1. Clone And Enter The Repo
 
@@ -70,7 +70,35 @@ runs_quick_test/
 The run should produce `signals.csv` and `signals.png`, then delete temporary
 checkpoint files.
 
-## 6. Run The Full Storage-Safe Sweep
+`signals.csv` includes loss, Hessian/OT geometry, CKA, activation norms,
+parameter norms, gradient norms, entropy, probability margins, logit margins,
+and true-class logit margins.
+
+## 6. Run A Small Pilot Sweep
+
+Run this before spending time on a full sweep:
+
+```powershell
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\run_sweeps.ps1 -Pilot -RunRoot runs_pilot_baselines
+```
+
+The built-in pilot runs 8 short modular-addition configurations:
+
+```text
+widths: 64, 128
+weight_decay: 0.0, 1.0
+train_fraction: 0.25, 1.0
+seed: 0
+```
+
+It uses cheap analysis settings so it validates the full train/analyze/plot/
+aggregate pipeline quickly. Aggregate outputs are written to:
+
+```text
+results/runs_pilot_baselines/
+```
+
+## 7. Run The Full Storage-Safe Sweep
 
 ```powershell
 C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\run_sweeps.ps1
@@ -88,7 +116,23 @@ When the sweep finishes, aggregate outputs are written to:
 results/runs_fresh_<YYYYMMDD_HHMMSS>/
 ```
 
-## 7. Resume An Interrupted Sweep
+The default full sweep is still 240 runs. It uses:
+
+```text
+weight_decay: 1.0
+train_fraction: 1.0
+```
+
+To run ablations, pass comma-separated grids:
+
+```powershell
+C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\run_sweeps.ps1 -RunRoot runs_wd_tf_ablation -WeightDecays "0.0,0.1,1.0" -TrainFractions "0.25,0.5,1.0"
+```
+
+That multiplies the run count by `len(WeightDecays) * len(TrainFractions)`, so
+use a dedicated run root and expect much longer runtime.
+
+## 8. Resume An Interrupted Sweep
 
 Use the same run root and pass `-Resume`:
 
@@ -100,7 +144,7 @@ Resume skips any configuration that already has `signals.csv`. If a run folder
 exists without `signals.csv`, stale temporary checkpoints are removed and that
 configuration restarts cleanly.
 
-## 8. Re-Aggregate Results Manually
+## 9. Re-Aggregate Results Manually
 
 ```powershell
 python summarize_runs.py --runs-dir runs_fresh_YYYYMMDD_HHMMSS --output-dir results\runs_fresh_YYYYMMDD_HHMMSS
@@ -113,7 +157,38 @@ summary.csv
 aggregate_summary.png
 ```
 
-## 9. Storage Policy
+## 10. Important Output Columns
+
+Each finished run writes `signals.csv` in its run folder. Useful columns:
+
+```text
+train_loss, val_loss
+weight_decay, train_fraction
+trace, trace_normalized, lambda_max
+sinkhorn_mean, sinkhorn_L*_to_L*
+cka_mean, cka_L*_to_L*
+activation_rms_L*, activation_std_L*
+param_l2, param_rms
+grad_l2, grad_rms
+train_entropy, val_entropy
+train_prob_margin, val_prob_margin
+train_logit_margin, val_logit_margin
+train_true_logit_margin, val_true_logit_margin
+```
+
+Run folder names include the ablation settings:
+
+```text
+<dataset>_L<layers>_d<width>_wd<weight_decay>_tf<train_fraction>_seed<seed>
+```
+
+For example:
+
+```text
+modular_addition_L1_d128_wd1_tf0p25_seed0
+```
+
+## 11. Storage Policy
 
 The default storage policy is designed to stay below 10 GB:
 
@@ -139,7 +214,7 @@ C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -ExecutionP
 
 Keeping checkpoints can push storage into the hundreds of GB.
 
-## 10. What To Commit
+## 12. What To Commit
 
 Commit source code, configs, and documentation:
 
@@ -161,6 +236,7 @@ Do not commit generated artifacts:
 data/*.bin
 runs/
 runs_fresh_*/
+runs_*/
 outputs/
 logs/
 results/
@@ -172,13 +248,13 @@ __pycache__/
 
 These are ignored by `.gitignore`.
 
-## 11. CPU Notes
+## 13. CPU Notes
 
 CPU execution is supported because `run.py` falls back to CPU when CUDA is not
 available. For CPU, use a smaller run:
 
 ```powershell
-python run.py device=cpu dataset=modular_addition model.n_layer=1 model.n_embd=64 model.n_head=2 max_iters=2000 eval_interval=400 save_every=400 analysis.hutchinson_samples=1 analysis.power_iters=5 analysis.num_examples=64 analysis.sinkhorn_iters=10
+python run.py device=cpu dataset=modular_addition model.n_layer=1 model.n_embd=64 model.n_head=2 max_iters=2000 eval_interval=400 save_every=400 weight_decay=1.0 train_fraction=1.0 analysis.hutchinson_samples=1 analysis.power_iters=5 analysis.num_examples=64 analysis.sinkhorn_iters=10
 ```
 
 Do not run the full 240-run sweep on CPU unless you are prepared for a very

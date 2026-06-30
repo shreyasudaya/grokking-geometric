@@ -45,13 +45,40 @@ def get_lr(it, warmup_iters, lr_decay_iters, learning_rate, min_lr):
     return min_lr + coeff * (learning_rate - min_lr)
 
 
-def setup_dataloader(data_dir, block_size, n_output, batch_size, device, device_type):
-    def get_batch(split):
+def _float_tag(value):
+    return f"{float(value):g}".replace('-', 'm').replace('.', 'p')
+
+
+def setup_dataloader(data_dir, block_size, n_output, batch_size, device, device_type,
+                     train_fraction=1.0, subset_seed=42):
+    eq_length = block_size + 1
+    memmaps = {}
+    num_eqs = {}
+    for split in ['train', 'val']:
         data_path = os.path.join(data_dir, f'{split}.bin')
-        data = np.memmap(data_path, dtype=np.uint16, mode='r')
-        eq_length = block_size + 1
-        num_eq = len(data) // eq_length
-        ix_eq = torch.randint(0, num_eq, (batch_size,))
+        memmaps[split] = np.memmap(data_path, dtype=np.uint16, mode='r')
+        num_eqs[split] = len(memmaps[split]) // eq_length
+
+    train_fraction = float(train_fraction)
+    train_subset = None
+    if train_fraction < 1.0:
+        if train_fraction <= 0.0:
+            raise ValueError(f"train_fraction must be in (0, 1], got {train_fraction}")
+        subset_size = max(1, int(round(num_eqs['train'] * train_fraction)))
+        rng = np.random.default_rng(int(subset_seed))
+        train_subset = np.sort(
+            rng.choice(num_eqs['train'], size=subset_size, replace=False)
+        ).astype(np.int64)
+        print(f"Using {subset_size:,}/{num_eqs['train']:,} train equations "
+              f"({train_fraction:g})")
+
+    def get_batch(split):
+        data = memmaps[split]
+        if split == 'train' and train_subset is not None:
+            choices = torch.randint(0, len(train_subset), (batch_size,)).numpy()
+            ix_eq = train_subset[choices]
+        else:
+            ix_eq = torch.randint(0, num_eqs[split], (batch_size,)).numpy()
         ix = ix_eq * eq_length
         x = torch.stack([torch.from_numpy((data[i:i+block_size]).astype(np.int64)) for i in ix])
         y = torch.stack([torch.from_numpy((data[i+1:i+1+block_size]).astype(np.int64)) for i in ix])
@@ -92,6 +119,7 @@ def train_model(cfg: DictConfig, out_dir: str, device: str, device_type: str, ct
     # Data
     get_batch = setup_dataloader(
         data_dir, ds_cfg.block_size, ds_cfg.n_output, cfg.batch_size, device, device_type,
+        train_fraction=cfg.train_fraction, subset_seed=cfg.seed,
     )
 
     # Save metadata
@@ -102,6 +130,10 @@ def train_model(cfg: DictConfig, out_dir: str, device: str, device_type: str, ct
         'cuda_version': torch.version.cuda,
         'device': device,
         'platform': platform.platform(),
+        'weight_decay': float(cfg.weight_decay),
+        'train_fraction': float(cfg.train_fraction),
+        'learning_rate': float(cfg.learning_rate),
+        'max_iters': int(cfg.max_iters),
     }
     with open(os.path.join(out_dir, 'run_metadata.json'), 'w') as f:
         json.dump(run_metadata, f, indent=2)
@@ -189,7 +221,14 @@ def _save_ckpt(model, optimizer, model_args, cfg, out_dir, iter_num, val_loss=No
         'n_output': cfg.dataset.n_output,
         'iter_num': iter_num,
         'val_loss': val_loss,
-        'run_metadata': {},
+        'weight_decay': float(cfg.weight_decay),
+        'train_fraction': float(cfg.train_fraction),
+        'run_metadata': {
+            'weight_decay': float(cfg.weight_decay),
+            'train_fraction': float(cfg.train_fraction),
+            'learning_rate': float(cfg.learning_rate),
+            'seed': int(cfg.seed),
+        },
     }
     if storage.get('save_optimizer', False):
         ckpt['optimizer'] = optimizer.state_dict()
@@ -290,15 +329,26 @@ def run_analysis(cfg: DictConfig, checkpoint_dir: str, device: str, exp_name: st
                 hutchinson_samples=an.hutchinson_samples,
                 power_iters=an.power_iters,
                 seed=cfg.seed,
+                train_fraction=cfg.train_fraction,
             )
             record['train_loss'] = h['train_loss']
             record['val_loss'] = h['val_loss']
+            record['weight_decay'] = float(cfg.weight_decay)
+            record['train_fraction'] = float(cfg.train_fraction)
             record['lambda_max'] = h['power_iteration']['lambda_max']
             record['trace'] = h['hutchinson']['trace']
             record['trace_normalized'] = h['hutchinson']['trace_normalized']
             record['frobenius_norm'] = h['hutchinson']['frobenius_norm']
             record['param_l2'] = h.get('param_l2')
             record['param_rms'] = h.get('param_rms')
+            record['grad_l2'] = h.get('grad_l2')
+            record['grad_rms'] = h.get('grad_rms')
+            for prefix in ['train', 'val']:
+                stats = h.get(f'{prefix}_stats', {})
+                record[f'{prefix}_entropy'] = stats.get('entropy')
+                record[f'{prefix}_prob_margin'] = stats.get('prob_margin')
+                record[f'{prefix}_logit_margin'] = stats.get('logit_margin')
+                record[f'{prefix}_true_logit_margin'] = stats.get('true_logit_margin')
         except Exception as e:
             print(f"  Hessian failed at step {step}: {e}")
 
@@ -368,7 +418,11 @@ def run_analysis(cfg: DictConfig, checkpoint_dir: str, device: str, exp_name: st
 
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(cfg: DictConfig):
-    exp = f"{cfg.dataset.dataset_name}_L{cfg.model.n_layer}_d{cfg.model.n_embd}_seed{cfg.seed}"
+    exp = (
+        f"{cfg.dataset.dataset_name}_L{cfg.model.n_layer}_d{cfg.model.n_embd}"
+        f"_wd{_float_tag(cfg.weight_decay)}_tf{_float_tag(cfg.train_fraction)}"
+        f"_seed{cfg.seed}"
+    )
     out_dir = os.path.abspath(os.path.join(cfg.run_root, exp))
     os.makedirs(out_dir, exist_ok=True)
 
@@ -395,7 +449,7 @@ def main(cfg: DictConfig):
         dir=out_dir,
         mode=cfg.wandb.mode,
     )
-    wandb.log({'seed': cfg.seed, 'n_parameters': sum(p.numel() for p in GPT(GPTConfig(**cfg.model)).parameters())}, step=0)
+    wandb.log({'seed': cfg.seed}, step=0)
 
     if cfg.train:
         print(f"\n{'='*60}\nTRAINING\n{'='*60}")

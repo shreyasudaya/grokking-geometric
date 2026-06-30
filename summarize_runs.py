@@ -17,19 +17,27 @@ import pandas as pd
 
 
 def parse_run_name(name):
-    match = re.match(r'(.+)_L(\d+)_d(\d+)_seed(\d+)$', name)
+    match = re.match(r'(.+)_L(\d+)_d(\d+)(?:_wd([^_]+))?(?:_tf([^_]+))?_seed(\d+)$', name)
     if not match:
         return {
             'dataset': name,
             'n_layer': np.nan,
             'n_embd': np.nan,
+            'weight_decay': np.nan,
+            'train_fraction': np.nan,
             'seed': np.nan,
         }
+    def parse_tag(value):
+        if value is None:
+            return np.nan
+        return float(value.replace('m', '-').replace('p', '.'))
     return {
         'dataset': match.group(1),
         'n_layer': int(match.group(2)),
         'n_embd': int(match.group(3)),
-        'seed': int(match.group(4)),
+        'weight_decay': parse_tag(match.group(4)),
+        'train_fraction': parse_tag(match.group(5)),
+        'seed': int(match.group(6)),
     }
 
 
@@ -95,7 +103,14 @@ def summarize_run(csv_path):
         'activation_rms_peak_step': act_peak_step,
     }
 
-    for col in ['trace', 'trace_normalized', 'lambda_max', 'param_l2', 'param_rms']:
+    for col in [
+        'trace', 'trace_normalized', 'lambda_max', 'param_l2', 'param_rms',
+        'grad_l2', 'grad_rms',
+        'train_entropy', 'val_entropy',
+        'train_prob_margin', 'val_prob_margin',
+        'train_logit_margin', 'val_logit_margin',
+        'train_true_logit_margin', 'val_true_logit_margin',
+    ]:
         if col in df:
             vals = df[col].astype(float)
             out[f'{col}_peak'] = float(vals.max())
