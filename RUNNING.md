@@ -15,6 +15,15 @@ or `-Mode ablation` for the expanded weight-decay/train-fraction grid. The
 launcher creates `.venv`, installs dependencies, generates datasets, enables
 intervention metrics, and then calls `run_sweeps.ps1`.
 
+For a Linux GPU instance, such as RunPod or Lambda Cloud, use:
+
+```bash
+bash run_fresh_linux.sh --mode pilot
+```
+
+Use `--mode quick`, `--mode full`, or `--mode ablation` for the corresponding
+run sizes.
+
 ## 1. Clone And Enter The Repo
 
 ```powershell
@@ -156,6 +165,22 @@ The fresh-clone launcher exposes this as:
 .\run_fresh_windows.ps1 -Mode ablation -WeightDecays "0.0,0.1,1.0" -TrainFractions "0.25,0.5,1.0"
 ```
 
+Linux equivalent:
+
+```bash
+bash run_fresh_linux.sh --mode ablation --weight-decays "0.0,0.1,1.0" --train-fractions "0.25,0.5,1.0"
+```
+
+For short cloud sessions, chunk the Linux run by dataset, seed, width, or
+depth:
+
+```bash
+bash run_fresh_linux.sh --mode full --dataset modular_addition --run-root runs_kaggle_full --resume
+bash run_fresh_linux.sh --mode full --dataset modular_multiplication --run-root runs_kaggle_full --resume
+bash run_fresh_linux.sh --mode full --dataset symmetric_group --run-root runs_kaggle_full --resume
+bash run_fresh_linux.sh --mode full --dataset modular_addition --seeds "0,1" --widths "64,128" --run-root runs_kaggle_full --resume
+```
+
 ## 8. Resume An Interrupted Sweep
 
 Use the same run root and pass `-Resume`:
@@ -265,6 +290,7 @@ conf/
 run.py
 run_sweeps.ps1
 run_fresh_windows.ps1
+run_fresh_linux.sh
 summarize_runs.py
 analysis and plotting scripts
 geometry_utils/
@@ -304,6 +330,13 @@ Or use the fresh-clone launcher:
 .\run_fresh_windows.ps1 -Mode pilot -Cpu
 ```
 
+Linux CPU equivalent:
+
+```bash
+bash run_fresh_linux.sh --mode quick --cpu
+bash run_fresh_linux.sh --mode pilot --cpu
+```
+
 Do not run the full 240-run sweep on CPU unless you are prepared for a very
 long runtime.
 
@@ -323,6 +356,13 @@ To save terminal output while still seeing it:
 ```powershell
 New-Item -ItemType Directory -Force logs
 .\run_fresh_windows.ps1 -Mode full *>&1 | Tee-Object -FilePath logs\full_sweep.log
+```
+
+Linux:
+
+```bash
+mkdir -p logs
+bash run_fresh_linux.sh --mode full 2>&1 | tee logs/full_sweep.log
 ```
 
 To check completed runs from another PowerShell window:
