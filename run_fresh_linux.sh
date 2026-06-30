@@ -14,7 +14,9 @@ Usage:
 Options:
   --mode quick|pilot|full|ablation   Run mode (default: pilot)
   --cpu                              Install/use CPU PyTorch and force device=cpu
-  --skip-install                     Reuse the current Python environment
+  --skip-install                     Reuse the current Python environment without pip installs
+  --system-python                    Use the current Python environment instead of creating .venv
+  --skip-torch-install               Do not reinstall torch/torchvision/torchaudio
   --run-root NAME                    Output run root
   --dataset NAME|all                 Dataset chunk for full/ablation modes
   --layers LIST                      Comma-separated layer grid
@@ -33,6 +35,8 @@ EOF
 mode="pilot"
 cpu=0
 skip_install=0
+system_python=0
+skip_torch_install=0
 run_root=""
 dataset="all"
 layers_override=""
@@ -58,6 +62,16 @@ while [[ $# -gt 0 ]]; do
       ;;
     --skip-install)
       skip_install=1
+      system_python=1
+      skip_torch_install=1
+      shift
+      ;;
+    --system-python)
+      system_python=1
+      shift
+      ;;
+    --skip-torch-install)
+      skip_torch_install=1
       shift
       ;;
     --run-root)
@@ -133,23 +147,82 @@ if [[ ! -f run.py ]]; then
   exit 1
 fi
 
-if [[ ! -x .venv/bin/python ]]; then
-  echo "Creating .venv..."
-  python3 -m venv .venv
+if [[ -n "${KAGGLE_KERNEL_RUN_TYPE:-}" || -d /kaggle ]]; then
+  if [[ "$system_python" -eq 0 ]]; then
+    echo "Detected Kaggle; using the current Python environment and existing PyTorch."
+    system_python=1
+    skip_torch_install=1
+  fi
 fi
 
-python_bin=".venv/bin/python"
+if [[ "$system_python" -eq 1 ]]; then
+  python_bin="${PYTHON:-python3}"
+else
+  if [[ ! -x .venv/bin/python ]]; then
+    echo "Creating .venv..."
+    python3 -m venv .venv
+  fi
+  python_bin=".venv/bin/python"
+fi
+
+install_requirements() {
+  if [[ "$skip_torch_install" -eq 1 ]]; then
+    local filtered_req
+    filtered_req="$(mktemp)"
+    grep -Ev '^[[:space:]]*(torch|torchvision|torchaudio)([<>=[:space:]]|$)' requirements.txt > "$filtered_req"
+    "$python_bin" -m pip install -r "$filtered_req"
+    rm -f "$filtered_req"
+  else
+    "$python_bin" -m pip install -r requirements.txt
+  fi
+}
 
 if [[ "$skip_install" -eq 0 ]]; then
   echo "Installing Python dependencies..."
-  "$python_bin" -m pip install --upgrade pip
-  if [[ "$cpu" -eq 1 ]]; then
-    "$python_bin" -m pip install torch torchvision torchaudio
-  else
-    "$python_bin" -m pip install torch torchvision torchaudio --index-url "$cuda_index_url"
+  if [[ "$system_python" -eq 0 ]]; then
+    "$python_bin" -m pip install --upgrade pip
   fi
-  "$python_bin" -m pip install -r requirements.txt
+  if [[ "$skip_torch_install" -eq 0 ]]; then
+    if [[ "$cpu" -eq 1 ]]; then
+      "$python_bin" -m pip install torch torchvision torchaudio
+    else
+      "$python_bin" -m pip install torch torchvision torchaudio --index-url "$cuda_index_url"
+    fi
+  else
+    "$python_bin" - <<'PY'
+import torch
+print(f"Using existing PyTorch {torch.__version__}; cuda_available={torch.cuda.is_available()}")
+PY
+  fi
+  install_requirements
 fi
+
+echo "Checking Python dependencies..."
+"$python_bin" - <<'PY'
+import importlib.util
+
+modules = [
+    ("torch", "torch"),
+    ("hydra", "hydra-core"),
+    ("omegaconf", "omegaconf"),
+    ("numpy", "numpy"),
+    ("pandas", "pandas"),
+    ("wandb", "wandb"),
+    ("tqdm", "tqdm"),
+    ("matplotlib", "matplotlib"),
+    ("scipy", "scipy"),
+    ("ruptures", "ruptures"),
+    ("statsmodels", "statsmodels"),
+    ("seaborn", "seaborn"),
+]
+missing = [package for module, package in modules if importlib.util.find_spec(module) is None]
+if missing:
+    raise SystemExit(
+        "Missing Python packages: "
+        + ", ".join(missing)
+        + ". Re-run without --skip-install, or install them in the active environment."
+    )
+PY
 
 echo "Preparing datasets..."
 "$python_bin" data/modular_addition/prepare.py
@@ -279,7 +352,14 @@ run_one() {
   local start end elapsed
   start=$(date +%s)
   if ! "${cmd[@]}"; then
+    end=$(date +%s)
+    elapsed=$(( end - start ))
     echo "  FAILED: $exp_name" >&2
+    printf '  Failed after %.1f min\n\n' "$("$python_bin" - <<PY
+print($elapsed / 60)
+PY
+)" >&2
+    return 1
   fi
   end=$(date +%s)
   elapsed=$(( end - start ))

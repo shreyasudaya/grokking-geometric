@@ -24,6 +24,17 @@ bash run_fresh_linux.sh --mode pilot
 Use `--mode quick`, `--mode full`, or `--mode ablation` for the corresponding
 run sizes.
 
+On Kaggle, prefer the notebook command that reuses Kaggle's preinstalled
+PyTorch instead of downloading fresh CUDA wheels into `/kaggle/working`:
+
+```bash
+bash run_fresh_linux.sh --mode pilot --run-root runs_kaggle_pilot --system-python --skip-torch-install
+```
+
+The Linux launcher also auto-detects Kaggle and chooses this safer path by
+default. Use `--skip-install` only after the environment dependencies are
+already installed; it now reuses the active Python environment directly.
+
 ## 1. Clone And Enter The Repo
 
 ```powershell
