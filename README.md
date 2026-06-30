@@ -24,6 +24,35 @@ python data/permutation_composition/prepare.py    # S₆ composition
 
 ## Training
 
+For new experiments and sweeps, prefer the Hydra runner because it has storage
+guards enabled by default:
+
+```bash
+python run.py dataset=modular_addition model.n_layer=2 model.n_embd=128 seed=0
+```
+
+Default storage policy:
+- saves checkpoints every 200 steps, not every 10 steps;
+- saves model weights only, without optimizer/RNG state;
+- analyzes every saved checkpoint;
+- deletes analyzed checkpoints after `signals.csv` is written;
+- prunes a run if it exceeds `storage.max_run_gb` (default: 9.5 GB).
+
+To keep checkpoints for debugging, opt in explicitly:
+
+```bash
+python run.py storage.keep_checkpoints_after_analysis=true storage.save_optimizer=true storage.save_rng=true
+```
+
+For a fresh storage-safe sweep, run:
+
+```powershell
+.\run_sweeps.ps1
+```
+
+This writes to a timestamped `runs_fresh_*` directory and aggregates results
+under `results/<run-root>/`.
+
 Select a dataset with `--dataset`:
 
 ```bash
@@ -67,6 +96,10 @@ python train.py --dataset modular_addition --n-layer 4 --n-head 4 --n-embd 256 -
 - Checkpoints: `{out_dir}/ckpt_{iter}.pt` — each checkpoint includes `model`, `optimizer`, `model_args` (with `block_size`, `vocab_size`), `dataset_name`, `n_output`, `iter_num`, `best_val_loss`, `rng_states`, and `run_metadata`.
 
 ## Post-Training Analysis
+
+Note: the legacy `train.py` path still writes full checkpoints. Use sparse
+`--save-every` / `--eval-interval` values if you run it directly, or use
+`run.py` for the 10 GB storage policy.
 
 ```bash
 python plot_and_analyze.py --out-dir out-grokking --eval-iters 5 --batch-size 256

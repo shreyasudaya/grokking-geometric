@@ -70,7 +70,7 @@ def plot_signals(csv_path, output_path, pen=10, maxlag=10):
     df = pd.read_csv(csv_path)
     df = df.sort_values('step').reset_index(drop=True)
 
-    sinkhorn_cols = [c for c in df.columns if c.startswith('sinkhorn_')]
+    sinkhorn_cols = [c for c in df.columns if c.startswith('sinkhorn_L')]
     has_sinkhorn = len(sinkhorn_cols) > 0
 
     # PELT on trace (RBF, low pen — only picks up major regime shifts)

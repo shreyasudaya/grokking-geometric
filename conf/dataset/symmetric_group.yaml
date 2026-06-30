@@ -1,0 +1,6 @@
+# @package dataset
+dataset_name: symmetric_group
+vocab_size: 7
+block_size: 16
+n_output: 5
+max_iters: 20000

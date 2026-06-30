@@ -186,6 +186,38 @@ def layerwise_sinkhorn_distances(states, epsilon=0.01, num_iters=50, project=Non
     return distances.tolist()
 
 
+def layerwise_baseline_geometry(states, project=None):
+    """Cheap representation baselines for comparison with OT.
+
+    Returns activation scale per layer and linear CKA between consecutive
+    layers. CKA is computed in feature space, so it avoids building an NxN
+    Gram matrix.
+    """
+    if project is not None:
+        pts = [project(h).float() for h in states]
+    else:
+        pts = [h.reshape(-1, h.shape[-1]).float() for h in states]
+
+    activation_rms = [float(torch.sqrt((x.pow(2).mean())).item()) for x in pts]
+    activation_std = [float(x.std(unbiased=False).item()) for x in pts]
+
+    cka = []
+    for a, b in zip(pts[:-1], pts[1:]):
+        a = a - a.mean(dim=0, keepdim=True)
+        b = b - b.mean(dim=0, keepdim=True)
+        cross = torch.linalg.matrix_norm(a.T @ b, ord='fro').pow(2)
+        aa = torch.linalg.matrix_norm(a.T @ a, ord='fro')
+        bb = torch.linalg.matrix_norm(b.T @ b, ord='fro')
+        denom = aa * bb
+        cka.append(float((cross / denom).item()) if denom.item() > 0 else 0.0)
+
+    return {
+        'activation_rms': activation_rms,
+        'activation_std': activation_std,
+        'linear_cka': cka,
+    }
+
+
 def layerwise_ot_pipeline(ckpt_path, dataset=None, device='cuda', num_examples=512,
                           target_dim=None, epsilon=0.01, sinkhorn_iters=50, seed=42):
     """Load a checkpoint, extract hidden states, and compute layerwise Sinkhorn distances.
@@ -227,6 +259,7 @@ def layerwise_ot_pipeline(ckpt_path, dataset=None, device='cuda', num_examples=5
 
     distances = layerwise_sinkhorn_distances(states, epsilon=epsilon,
                                               num_iters=sinkhorn_iters, project=proj)
+    baselines = layerwise_baseline_geometry(states, project=proj)
 
     results = {
         'checkpoint': ckpt_path,
@@ -239,6 +272,7 @@ def layerwise_ot_pipeline(ckpt_path, dataset=None, device='cuda', num_examples=5
         'epsilon': epsilon,
         'sinkhorn_iters': sinkhorn_iters,
         'distances': distances,
+        'baselines': baselines,
     }
     return results
 

@@ -6,4 +6,12 @@ datasets>=2.14.0
 tiktoken>=0.5.0
 wandb
 tqdm
+pandas
+matplotlib
+ruptures
+statsmodels
+scipy
+hydra-core
+omegaconf
+seaborn
 #pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128

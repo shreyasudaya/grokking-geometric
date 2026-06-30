@@ -1,0 +1,41 @@
+# @package _global_
+defaults:
+  - dataset: modular_addition
+  - model: default
+  - analysis: default
+  - _self_
+
+seed: 42
+device: cuda
+run_root: runs
+batch_size: 512
+train: true
+analyze: true
+max_iters: 10000
+eval_interval: 200
+save_every: 200
+learning_rate: 1.0e-3
+weight_decay: 1.0
+beta1: 0.9
+beta2: 0.98
+grad_clip: 1.0
+warmup_iters: 100
+min_lr: 1.0e-4
+decay_lr: true
+
+storage:
+  # Keep runs small by default. Analysis only needs model weights, not
+  # optimizer state or RNG snapshots.
+  save_optimizer: false
+  save_rng: false
+  max_checkpoints: 60
+  max_run_gb: 9.5
+  keep_checkpoints_after_analysis: false
+  keep_last_checkpoints: 0
+
+wandb:
+  project: grokking-geometry
+  entity: null
+  tags: []
+  notes: ""
+  mode: disabled

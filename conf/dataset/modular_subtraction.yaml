@@ -1,0 +1,6 @@
+# @package dataset
+dataset_name: modular_subtraction
+vocab_size: 99
+block_size: 4
+n_output: 1
+max_iters: 10000

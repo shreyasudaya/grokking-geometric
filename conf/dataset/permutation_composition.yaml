@@ -1,0 +1,6 @@
+# @package dataset
+dataset_name: permutation_composition
+vocab_size: 8
+block_size: 19
+n_output: 6
+max_iters: 20000

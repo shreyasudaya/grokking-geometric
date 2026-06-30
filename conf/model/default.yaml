@@ -1,0 +1,6 @@
+# @package model
+n_layer: 1
+n_head: 4
+n_embd: 128
+dropout: 0.0
+bias: false

@@ -113,6 +113,11 @@ def analyze_checkpoint(ckpt_path, dataset=None, device='cuda', batch_size=512,
     model.to(device)
     model.load_state_dict(ckpt['model'])
     model.train()
+    with torch.no_grad():
+        param_sq = sum(p.detach().float().pow(2).sum().item() for p in model.parameters())
+        n_params = sum(p.numel() for p in model.parameters())
+        param_l2 = float(np.sqrt(param_sq))
+        param_rms = float(np.sqrt(param_sq / n_params)) if n_params else 0.0
     for block in model.transformer.h:
         attn = block.attn
         attn.flash = False
@@ -166,6 +171,8 @@ def analyze_checkpoint(ckpt_path, dataset=None, device='cuda', batch_size=512,
         'ckpt_val_loss': ckpt_val_loss,
         'train_loss': train_loss,
         'val_loss': val_loss,
+        'param_l2': param_l2,
+        'param_rms': param_rms,
         'hutchinson': hutch,
         'power_iteration': power,
     }

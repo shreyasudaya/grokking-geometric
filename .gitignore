@@ -13,3 +13,11 @@ venv/
 out-grokking/
 roadmap.md
 out-*/
+outputs/
+runs/
+runs_fresh_*/
+logs/
+results/
+plots/*.png
+plots/*.csv
+!plots/.gitkeep

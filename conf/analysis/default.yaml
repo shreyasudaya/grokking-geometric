@@ -1,0 +1,8 @@
+# @package analysis
+hutchinson_samples: 5
+power_iters: 30
+num_examples: 256
+target_dim: 32
+epsilon: 0.05
+sinkhorn_iters: 30
+stride: 1
