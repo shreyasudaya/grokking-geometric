@@ -29,6 +29,7 @@ Options:
   --keep-checkpoints                 Keep checkpoints after analysis
   --max-run-gb GB                    Per-run storage cap (default: 9.5)
   --extra-overrides "..."            Extra Hydra overrides
+  --skip-summary                     Do not aggregate at the end
 EOF
 }
 
@@ -49,6 +50,7 @@ resume=0
 keep_checkpoints=0
 max_run_gb="9.5"
 extra_overrides=""
+skip_summary=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -121,6 +123,10 @@ while [[ $# -gt 0 ]]; do
     --extra-overrides)
       extra_overrides="${2:?missing value for --extra-overrides}"
       shift 2
+      ;;
+    --skip-summary)
+      skip_summary=1
+      shift
       ;;
     -h|--help)
       usage
@@ -450,10 +456,14 @@ done
 
 echo "============================================"
 echo "  SWEEP COMPLETE: $count / $total runs"
-echo "  Aggregating results into results/$run_root"
 echo "============================================"
 
-"$python_bin" summarize_runs.py --runs-dir "$run_root" --output-dir "results/$run_root"
+if [[ "$skip_summary" -eq 0 ]]; then
+  echo "Aggregating results into results/$run_root"
+  "$python_bin" summarize_runs.py --runs-dir "$run_root" --output-dir "results/$run_root"
+else
+  echo "Skipping aggregation because --skip-summary was set."
+fi
 
 echo "Done."
 echo "Run root: $run_root"
